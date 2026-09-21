@@ -5,6 +5,9 @@ After=network-online.target
 User=pricedip
 Group=pricedip
 WorkingDirectory=/opt/pricedip/search
+Environment=GIT_CONFIG_COUNT=1
+Environment=GIT_CONFIG_KEY_0=safe.directory
+Environment=GIT_CONFIG_VALUE_0=/opt/pricedip/search
 Environment=SEARXNG_SETTINGS_PATH=/etc/pricedip/search-settings.yml
 EnvironmentFile=/etc/pricedip/search.env
 ExecStart=/opt/pricedip/search-venv/bin/granian --interface wsgi --host 127.0.0.1 --port 4352 --workers 1 searx.webapp:application

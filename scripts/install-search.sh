@@ -6,6 +6,7 @@ install -d -o pricedip -g pricedip /var/lib/pricedip
 install -d /opt/pricedip /etc/pricedip
 if [ ! -d /opt/pricedip/search/.git ]; then git clone https://github.com/searxng/searxng.git /opt/pricedip/search; fi
 git -C /opt/pricedip/search checkout "$revision"
+apt-get install -y -qq python3-venv python3-dev build-essential libxslt1-dev libffi-dev libssl-dev
 python3 -m venv /opt/pricedip/search-venv
 /opt/pricedip/search-venv/bin/pip install --quiet --upgrade pip setuptools wheel pyyaml msgspec typing-extensions pybind11
 /opt/pricedip/search-venv/bin/pip install --quiet --use-pep517 --no-build-isolation /opt/pricedip/search granian
