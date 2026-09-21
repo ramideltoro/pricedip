@@ -25,9 +25,9 @@ test("owner authentication is browser-bound, one-use, isolated, and CSRF protect
       setTimeout(() => reject(Error("Startup timeout")), 8000).unref();
     });
     const base = "http://127.0.0.1:14350";
-    const shell=await fetch(base+"/");
-    assert.equal(shell.status,200);
-    assert.match(shell.headers.get("content-type") || "",/text\/html/);
+    const shell = await fetch(base + "/");
+    assert.equal(shell.status, 200);
+    assert.match(shell.headers.get("content-type") || "", /text\/html/);
     const login = await fetch(base + "/auth/login", { redirect: "manual" });
     const state = new URL(login.headers.get("location")!).searchParams.get(
       "state",

@@ -759,6 +759,8 @@ function App() {
                         <small>
                           {o.seller.name} · {o.reason}
                           {" · "}
+                          {o.condition} · {o.availability.replaceAll("_", " ")}
+                          {" · "}
                           {o.shipping === null
                             ? "Shipping not verified"
                             : "Shipping " + money(o.shipping)}

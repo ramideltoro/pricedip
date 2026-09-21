@@ -25,7 +25,7 @@ systemctl enable pricedip pricedip-worker pricedip-backup.timer
 systemctl restart pricedip pricedip-worker
 systemctl start pricedip-backup.timer
 for attempt in $(seq 1 20); do
- if curl -fsS http://127.0.0.1:4350/healthz | node -e 'let x="";process.stdin.on("data",c=>x+=c).on("end",()=>{try{let h=JSON.parse(x);process.exit(h.ok&&h.release===process.argv[1]?0:1)}catch{process.exit(1)}})' "$revision" && systemctl is-active --quiet pricedip-worker; then
+ if sudo -u pricedip node "$release/scripts/readiness.mjs" "$revision" && systemctl is-active --quiet pricedip-worker; then
   [ -z "$previous" ] || ln -sfn "$previous" /opt/pricedip/previous
   systemctl start pricedip-backup.service
   sudo -u pricedip node "$release/scripts/release-event.mjs" deployment
