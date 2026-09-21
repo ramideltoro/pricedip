@@ -1,0 +1,21 @@
+[Unit]
+Description=PriceDip web application
+After=network-online.target
+[Service]
+User=pricedip
+Group=pricedip
+WorkingDirectory=/opt/pricedip/current
+EnvironmentFile=/etc/pricedip/runtime.env
+ExecStart=/usr/bin/node dist-server/app.js
+Restart=on-failure
+RestartSec=5
+MemoryMax=512M
+CPUQuota=100%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pricedip
+UMask=0077
+[Install]
+WantedBy=multi-user.target

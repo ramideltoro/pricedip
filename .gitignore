@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-server/
+data/
+.env*
+!.env.example
+coverage/
+playwright-report/
+release.json

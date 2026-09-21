@@ -1,0 +1,1 @@
+const r=await fetch('https://pricedip.ramideltoro.com/healthz',{signal:AbortSignal.timeout(15000)});const j=await r.json();if(!r.ok||!j.ok||j.release!==process.argv[2])throw Error('Public release does not match deployment');console.log('Public release verified');

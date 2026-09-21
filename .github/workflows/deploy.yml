@@ -1,0 +1,68 @@
+name: Release PriceDip
+on:
+  workflow_run:
+    workflows: [Validate PriceDip]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pricedip-production
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with: {path: app, fetch-depth: 0, ref: '${{ github.event.workflow_run.head_sha || github.sha }}'}
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with: {repository: ramideltoro/pricedip-wiki, path: wiki, ssh-key: '${{ secrets.WIKI_DEPLOY_KEY }}'}
+      - uses: actions/setup-node@db0fb3a98ed314b69026b6e8c9be26a7e2fe65a8
+        with: {node-version: '22.22.1'}
+      - name: Validate immutable sources
+        run: |
+          cd app
+          npm ci
+          npm test
+          npm run build
+          node scripts/docs.mjs check ../wiki
+          node scripts/docs.mjs release ../wiki
+      - name: Publish matching wiki
+        run: |
+          cd wiki
+          npm ci
+          npm run check
+          npm run build
+          git config user.name pricedip-release
+          git config user.email pricedip-release@users.noreply.github.com
+          git add .
+          if ! git diff --cached --quiet; then git commit -m "Document PriceDip release $(git -C ../app rev-parse --short HEAD)"; git push origin HEAD:main; fi
+      - name: Wait for exact documentation publication
+        run: node app/scripts/wait-docs.mjs "$(git -C app rev-parse HEAD)"
+      - name: Package release
+        run: |
+          export APP_SHA=$(git -C app rev-parse HEAD)
+          export WIKI_SHA=$(git -C wiki rev-parse HEAD)
+          node -e 'require("fs").writeFileSync("app/release.json",JSON.stringify({app:process.env.APP_SHA,wiki:process.env.WIKI_SHA}))'
+          tar -czf release.tar.gz -C app dist dist-server scripts deploy package.json package-lock.json release.json
+      - name: Deploy through dedicated restricted key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/pricedip
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          curl -fsSL --retry 3 https://github.com/cloudflare/cloudflared/releases/download/2026.6.1/cloudflared-linux-amd64 -o /tmp/cloudflared
+          echo '5861a10a438fe8ddcfebb3b830f83966cbf193edafce0fe2eeb198fbae1f7a22 /tmp/cloudflared' | sha256sum -c -
+          chmod 700 /tmp/cloudflared
+          ssh -i ~/.ssh/pricedip -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o 'ProxyCommand=/tmp/cloudflared access ssh --hostname %h' pricedip-deploy@localserver.ramideltoro.com "deploy $(git -C app rev-parse HEAD)" < release.tar.gz
+      - name: Verify public release
+        run: node app/scripts/verify-release.mjs "$(git -C app rev-parse HEAD)"

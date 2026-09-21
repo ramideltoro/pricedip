@@ -1,0 +1,23 @@
+[Unit]
+Description=PriceDip collection and research worker
+After=network-online.target pricedip.service
+[Service]
+User=pricedip
+Group=pricedip
+WorkingDirectory=/opt/pricedip/current
+EnvironmentFile=/etc/pricedip/runtime.env
+ExecStart=/usr/bin/node dist-server/worker.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=140
+MemoryMax=2G
+CPUQuota=100%
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pricedip
+UMask=0077
+[Install]
+WantedBy=multi-user.target

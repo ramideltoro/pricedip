@@ -1,0 +1,23 @@
+use_default_settings:
+  engines:
+    keep_only: [google, bing, duckduckgo]
+general:
+  debug: false
+  instance_name: PriceDip private search
+server:
+  bind_address: 127.0.0.1
+  port: 4352
+  limiter: false
+  image_proxy: false
+search:
+  formats: [html, json]
+  safe_search: 1
+outgoing:
+  request_timeout: 8.0
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false

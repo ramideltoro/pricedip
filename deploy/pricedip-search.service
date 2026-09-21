@@ -1,0 +1,23 @@
+[Unit]
+Description=PriceDip private SearXNG search
+After=network-online.target
+[Service]
+User=pricedip
+Group=pricedip
+WorkingDirectory=/opt/pricedip/search
+Environment=SEARXNG_SETTINGS_PATH=/etc/pricedip/search-settings.yml
+EnvironmentFile=/etc/pricedip/search.env
+ExecStart=/opt/pricedip/search-venv/bin/granian --interface wsgi --host 127.0.0.1 --port 4352 --workers 1 searx.webapp:application
+Restart=on-failure
+RestartSec=10
+MemoryMax=768M
+CPUQuota=50%
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pricedip
+UMask=0077
+[Install]
+WantedBy=multi-user.target
