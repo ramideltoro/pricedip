@@ -275,11 +275,16 @@ app.post(
       })
       .parse(req.body);
     const a = identity(req);
-    if (b.local && !a.zip)
+    if ((b.local || b.delivery === "pickup") && !a.zip)
       throw Object.assign(Error("Set your ZIP code in Settings first"), {
         statusCode: 400,
       });
-    return discover(b.query, b.local ? a.zip : undefined, a.radius, b);
+    return discover(
+      b.query,
+      b.local || b.delivery === "pickup" ? a.zip : undefined,
+      a.radius,
+      b,
+    );
   },
 );
 app.post("/api/owner/products", async (req, res) => {

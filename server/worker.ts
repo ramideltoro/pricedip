@@ -1,4 +1,4 @@
-import { sourceFor } from "./policy.js";
+import { requiresLocation } from "./policy.js";
 import { deliverEmail } from "./email.js";
 import { checkDependencies } from "./dependencies.js";
 import fs from "node:fs";
@@ -112,7 +112,7 @@ while (!stopping) {
         if (job.kind === "research") await research(p);
         else {
           const offer = await extract(p.url, true);
-          if (sourceFor(p.url)?.local) {
+          if (requiresLocation(p.url, offer.delivery)) {
             const account: any = db
               .prepare(
                 "SELECT a.zip,a.radius FROM accounts a JOIN watchlists w ON w.owner=a.id WHERE w.id=?",

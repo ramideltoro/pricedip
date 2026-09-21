@@ -79,3 +79,7 @@ export function qualifies(
     !auction
   );
 }
+
+export function requiresLocation(url: string, delivery?: string) {
+  return !!sourceFor(url)?.local || delivery === "pickup";
+}
