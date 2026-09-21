@@ -28,7 +28,6 @@ jobs:
           cd app
           npm ci
           npm test
-          npm run build
           node scripts/docs.mjs check ../wiki
           node scripts/docs.mjs release ../wiki
       - name: Publish matching wiki

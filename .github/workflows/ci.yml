@@ -15,7 +15,12 @@ jobs:
         with: {repository: ramideltoro/pricedip-wiki, path: wiki}
       - uses: actions/setup-node@db0fb3a98ed314b69026b6e8c9be26a7e2fe65a8
         with: {node-version: '22.22.1', cache: npm, cache-dependency-path: app/package-lock.json}
-      - run: npm ci && npm test && npm run build
+      - name: Require documentation declaration
+        if: github.event_name == 'pull_request'
+        run: node app/scripts/check-pr.mjs
+      - run: npm ci && npm test
+        working-directory: app
+      - run: npm audit --omit=dev --audit-level=high
         working-directory: app
       - run: node app/scripts/docs.mjs check wiki app
       - run: npm ci && npm run check && npm run build

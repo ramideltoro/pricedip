@@ -1,2 +1,58 @@
-import dns from 'node:dns/promises';import {publicIP} from './fetcher.js';
-export async function renderPage(input:string){const u=new URL(input);if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443')throw Error('Unsafe URL');const records=await dns.lookup(u.hostname,{all:true});if(!records.length||records.some(r=>!publicIP(r.address)))throw Error('Private source blocked');const {chromium}=await import('playwright');const browser=await chromium.launch({headless:true,args:['--host-resolver-rules=MAP '+u.hostname+' '+records[0].address+', EXCLUDE localhost','--disable-quic']});try{const context=await browser.newContext({serviceWorkers:'block',acceptDownloads:false});await context.route('**/*',async route=>{const v=new URL(route.request().url());if(v.origin!==u.origin||!['document','script','xhr','fetch'].includes(route.request().resourceType()))return route.abort();return route.continue();});const page=await context.newPage();await page.goto(u.href,{waitUntil:'domcontentloaded',timeout:20000});await page.waitForSelector('script[type="application/ld+json"]',{state:'attached',timeout:5000}).catch(()=>{});const html=await page.content();if(html.length>2000000)throw Error('Page too large');return html;}finally{await browser.close();}}
+import dns from "node:dns/promises";
+import { publicIP } from "./fetcher.js";
+export async function renderPage(input: string) {
+  const u = new URL(input);
+  if (
+    u.protocol !== "https:" ||
+    u.username ||
+    u.password ||
+    (u.port && u.port !== "443")
+  )
+    throw Error("Unsafe URL");
+  const records = await dns.lookup(u.hostname, { all: true });
+  if (!records.length || records.some((r) => !publicIP(r.address)))
+    throw Error("Private source blocked");
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      "--host-resolver-rules=MAP " +
+        u.hostname +
+        " " +
+        records[0].address +
+        ", EXCLUDE localhost",
+      "--disable-quic",
+    ],
+  });
+  try {
+    const context = await browser.newContext({
+      serviceWorkers: "block",
+      acceptDownloads: false,
+    });
+    await context.routeWebSocket("**/*", (ws) => ws.close());
+    await context.route("**/*", async (route) => {
+      const v = new URL(route.request().url());
+      if (
+        v.origin !== u.origin ||
+        !["document", "script", "xhr", "fetch"].includes(
+          route.request().resourceType(),
+        )
+      )
+        return route.abort();
+      return route.continue();
+    });
+    const page = await context.newPage();
+    await page.goto(u.href, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page
+      .waitForSelector('script[type="application/ld+json"]', {
+        state: "attached",
+        timeout: 5000,
+      })
+      .catch(() => {});
+    const html = await page.content();
+    if (html.length > 2000000) throw Error("Page too large");
+    return html;
+  } finally {
+    await browser.close();
+  }
+}

@@ -1,7 +1,95 @@
-const day=86400;const time=Math.floor(Date.now()/1000);
-export const sampleProducts=[
-{id:'sample-sony',title:'Sony WH-1000XM5',subtitle:'Wireless noise-canceling headphones',category:'Audio',retailer:'Best Buy',price:24999,target:26000,original:39999,color:'#bda77d',icon:'headphones',status:'below_target',condition:'new'},
-{id:'sample-kindle',title:'Kindle Paperwhite',subtitle:'16 GB · 7-inch display · Black',category:'Reading',retailer:'Amazon',price:13499,target:12000,original:15999,color:'#b6bdb2',icon:'tablet',status:'watching',condition:'new'},
-{id:'sample-dyson',title:'Dyson V15 Detect',subtitle:'Cordless vacuum · Yellow / Nickel',category:'Home',retailer:'Target',price:54999,target:50000,original:74999,color:'#c7a877',icon:'vacuum',status:'watching',condition:'new'},
-{id:'sample-camera',title:'Fujifilm X100VI',subtitle:'40.2 MP · Silver · Local pickup',category:'Photography',retailer:'eBay',price:154900,target:150000,original:179900,color:'#9caea7',icon:'camera',status:'watching',condition:'used'}
-].map((p,i)=>({...p,sample:true,url:'https://www.google.com/search?q='+encodeURIComponent(p.title),last_success:time-1800,created:time-30*day,list_id:'sample',seller:'Illustrative verified seller',history:Array.from({length:31},(_,d)=>({observed:time-(30-d)*day,price:d===30?p.price:Math.round(p.original-(p.original-p.price)*d/30+Math.sin(d*1.7+i)*p.price*.025)})),research:{summary:'Illustrative research preview. Run a live research brief on your own listing to see Qwen findings with sources.',pros:['Compare exact models across sellers','Keep condition and shipping costs visible','Wait for your target price'],cons:['This showcase contains sample prices','Retailer availability changes'],specifications:[{name:'Data type',value:'Illustrative sample'}],alternatives:[],sources:[]}}));
+const day = 86400;
+const time = Math.floor(Date.now() / 1000);
+export const sampleProducts = [
+  {
+    id: "sample-sony",
+    title: "Sony WH-1000XM5",
+    subtitle: "Wireless noise-canceling headphones",
+    category: "Audio",
+    retailer: "Best Buy",
+    price: 24999,
+    target: 26000,
+    original: 39999,
+    color: "#bda77d",
+    icon: "headphones",
+    status: "below_target",
+    condition: "new",
+  },
+  {
+    id: "sample-kindle",
+    title: "Kindle Paperwhite",
+    subtitle: "16 GB · 7-inch display · Black",
+    category: "Reading",
+    retailer: "Amazon",
+    price: 13499,
+    target: 12000,
+    original: 15999,
+    color: "#b6bdb2",
+    icon: "tablet",
+    status: "watching",
+    condition: "new",
+  },
+  {
+    id: "sample-dyson",
+    title: "Dyson V15 Detect",
+    subtitle: "Cordless vacuum · Yellow / Nickel",
+    category: "Home",
+    retailer: "Target",
+    price: 54999,
+    target: 50000,
+    original: 74999,
+    color: "#c7a877",
+    icon: "vacuum",
+    status: "watching",
+    condition: "new",
+  },
+  {
+    id: "sample-camera",
+    title: "Fujifilm X100VI",
+    subtitle: "40.2 MP · Silver · Local pickup",
+    category: "Photography",
+    retailer: "eBay",
+    price: 154900,
+    target: 150000,
+    original: 179900,
+    color: "#9caea7",
+    icon: "camera",
+    status: "watching",
+    condition: "used",
+  },
+].map((p, i) => ({
+  ...p,
+  sample: true,
+  url: "https://www.google.com/search?q=" + encodeURIComponent(p.title),
+  last_success: time - 1800,
+  created: time - 30 * day,
+  list_id: "sample",
+  seller: "Illustrative verified seller",
+  history: Array.from({ length: 31 }, (_, d) => ({
+    observed: time - (30 - d) * day,
+    price:
+      d === 30
+        ? p.price
+        : Math.round(
+            p.original -
+              ((p.original - p.price) * d) / 30 +
+              Math.sin(d * 1.7 + i) * p.price * 0.025,
+          ),
+  })),
+  research: {
+    summary:
+      "Illustrative research preview. Run a live research brief on your own listing to see Qwen findings with sources.",
+    pros: [
+      "Compare exact models across sellers",
+      "Keep condition and shipping costs visible",
+      "Wait for your target price",
+    ],
+    cons: [
+      "This showcase contains sample prices",
+      "Retailer availability changes",
+    ],
+    specifications: [{ name: "Data type", value: "Illustrative sample" }],
+    alternatives: [],
+    sources: [],
+  },
+}));

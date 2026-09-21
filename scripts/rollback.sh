@@ -10,4 +10,5 @@ mv -Tf /opt/pricedip/current.next /opt/pricedip/current
 systemctl restart pricedip pricedip-worker
 sleep 3
 curl -fsS http://127.0.0.1:4350/healthz
+sudo -u pricedip node "$current/scripts/release-event.mjs" rollback
 ln -sfn "$current" /opt/pricedip/previous

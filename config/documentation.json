@@ -1,1 +1,13 @@
-{"impact":"Initial implementation","guides":["guides/using-pricedip","guides/seller-policy","technical/architecture","technical/development","operations/deployment","operations/monitoring","operations/recovery","reference/limitations"]}
+{
+  "impact": "Behavioral: strict variants, private local eligibility, delivery filters, resilient email, dependency health, release archives and recovery",
+  "guides": [
+    "guides/using-pricedip",
+    "guides/seller-policy",
+    "technical/architecture",
+    "technical/development",
+    "operations/deployment",
+    "operations/monitoring",
+    "operations/recovery",
+    "reference/limitations"
+  ]
+}

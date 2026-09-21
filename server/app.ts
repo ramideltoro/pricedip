@@ -1,27 +1,496 @@
-import Fastify from 'fastify';import cookie from '@fastify/cookie';import statics from '@fastify/static';import rateLimit from '@fastify/rate-limit';import {randomBytes,createHash,timingSafeEqual} from 'node:crypto';import {jwtVerify} from 'jose';import path from 'node:path';import fs from 'node:fs';import {z} from 'zod';import {openDb,bootstrap,now,id,enqueue,count} from './db.js';import {sourceFor,sources} from './policy.js';import {discover} from './search.js';import {sampleProducts} from './sample.js';
-const origin=process.env.APP_ORIGIN||'https://pricedip.ramideltoro.com',ownerEmail='rami.deltoro@gmail.com';const db=openDb();const owner=bootstrap(db,ownerEmail);const app=Fastify({logger:false,bodyLimit:32768,trustProxy:'127.0.0.1'});await app.register(cookie);await app.register(rateLimit,{max:100,timeWindow:'1 minute'});let release:any={app:'development',wiki:null};try{release=JSON.parse(fs.readFileSync('release.json','utf8'));}catch{}
-const sessionName='__Host-pricedip-session';const hash=(s:string)=>createHash('sha256').update(s).digest('hex');
-const identity=(req:any):any=>{const token=req.cookies[sessionName];if(!token)return null;return db.prepare('SELECT a.* FROM sessions s JOIN accounts a ON a.id=s.owner WHERE s.token=? AND s.expires>? AND a.email=?').get(hash(token),now(),ownerEmail);};
-app.addHook('onRequest',async(req,res)=>{res.header('X-Content-Type-Options','nosniff').header('Referrer-Policy','no-referrer').header('X-Frame-Options','DENY').header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");if(req.url.startsWith('/api/owner/')){if(!identity(req))return res.code(401).send({error:'Owner Google sign-in required'});res.header('Cache-Control','private, no-store');if(req.method!=='GET'&&req.headers.origin!==origin)return res.code(403).send({error:'Invalid request origin'});}if(req.url.startsWith('/auth'))res.header('Cache-Control','private, no-store');});
-app.addHook('onResponse',async(req,res)=>{if(!req.url.startsWith('/internal/')){count(db,'http_requests_total');if(res.statusCode>=500)count(db,'http_errors_total');}});
-app.setErrorHandler((error:any,req,res)=>{const validation=error instanceof z.ZodError;res.code(validation?400:error.statusCode||500).send({error:validation?'Please check the entered values.':error.statusCode&&error.statusCode<500?error.message:'Request could not be completed.'});});
-app.get('/healthz',async()=>({ok:true,service:'pricedip',release:release.app}));
-app.get('/api/session',async(req,res)=>{res.header('Cache-Control','private, no-store');const a=identity(req);return {authenticated:!!a,email:a?.email};});
-app.get('/auth/login',async(req,res)=>{if(!process.env.AUTH_BRIDGE_SECRET)return res.code(503).send('Sign-in is not configured');const state=randomBytes(32).toString('base64url');db.prepare('INSERT INTO flows VALUES(?,?)').run(state,now()+600);res.setCookie('__Host-pricedip-flow',state,{path:'/',secure:true,httpOnly:true,sameSite:'lax',maxAge:600});return res.redirect('https://observe.ramideltoro.com/auth/pricedip?state='+state);});
-app.get('/auth/callback',async(req,res)=>{try{const q=z.object({token:z.string().max(5000)}).parse(req.query);const {payload}=await jwtVerify(q.token,new TextEncoder().encode(process.env.AUTH_BRIDGE_SECRET||''),{algorithms:['HS256'],issuer:'https://observe.ramideltoro.com',audience:'pricedip',maxTokenAge:'60s',requiredClaims:['email','state','exp','iat','jti']});const state=String(payload.state);if(payload.email!==ownerEmail||state!==req.cookies['__Host-pricedip-flow'])throw Error('Invalid identity');const consumed=db.prepare('DELETE FROM flows WHERE state=? AND expires>?').run(state,now());if(consumed.changes!==1)throw Error('Expired flow');const token=randomBytes(32).toString('base64url');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hash(token),owner.id,now()+43200);res.setCookie(sessionName,token,{path:'/',secure:true,httpOnly:true,sameSite:'lax',maxAge:43200});res.clearCookie('__Host-pricedip-flow',{path:'/',secure:true});return res.redirect('/');}catch{return res.code(403).type('text/html').send('<h1>Sign-in could not be completed</h1><p>Only the approved owner can sign in.</p><a href="/auth/login">Try again</a>');}});
-app.post('/api/owner/logout',async(req,res)=>{db.prepare('DELETE FROM sessions WHERE token=?').run(hash(req.cookies[sessionName]||''));res.clearCookie(sessionName,{path:'/',secure:true});return {ok:true};});
-app.get('/api/public/overview',async(req,res)=>{res.header('Cache-Control','public,max-age=15');const lists=db.prepare('SELECT id,name FROM watchlists WHERE published=1').all();const products=db.prepare(`SELECT p.id,p.list_id,p.title,p.url,p.retailer,p.target,p.condition,p.status,p.reason,p.last_checked,p.last_success,p.active,p.created,(SELECT price FROM observations WHERE product_id=p.id ORDER BY observed DESC LIMIT 1) price FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.published=1 ORDER BY p.created DESC LIMIT 100`).all();const events=db.prepare('SELECT e.*,p.title FROM events e JOIN products p ON p.id=e.product_id JOIN watchlists w ON w.id=p.list_id WHERE w.published=1 ORDER BY e.created DESC LIMIT 30').all();return {lists,products,events,samples:sampleProducts,sources,release};});
-app.get('/api/public/products/:id',async(req:any,res)=>{res.header('Cache-Control','private,no-store');const p:any=db.prepare('SELECT p.* FROM products p JOIN watchlists w ON w.id=p.list_id WHERE p.id=? AND (w.published=1 OR w.owner=?)').get(req.params.id,identity(req)?.id||'');if(!p)return res.code(404).send({error:'Product not found'});const history=db.prepare('SELECT observed,price,shipping,seller,availability FROM observations WHERE product_id=? ORDER BY observed').all(p.id);const step=Math.max(1,Math.ceil(history.length/400));const research:any=db.prepare('SELECT * FROM research WHERE product_id=?').get(p.id);return {history:history.filter((_,i)=>i%step===0||i===history.length-1),research:research?{...JSON.parse(research.brief),sources:JSON.parse(research.sources),created:research.created}:null};});
-app.get('/api/owner/settings',async(req)=>{const a=identity(req);return {zip:a.zip||'',radius:a.radius,lists:db.prepare('SELECT id,name,published FROM watchlists WHERE owner=?').all(a.id)};});
-app.put('/api/owner/settings',async(req)=>{const b=z.object({zip:z.union([z.literal(''),z.string().regex(/^\d{5}$/)]),radius:z.number().int().min(1).max(500)}).parse(req.body);db.prepare('UPDATE accounts SET zip=?,radius=? WHERE id=?').run(b.zip||null,b.radius,identity(req).id);return {ok:true};});
-app.post('/api/owner/watchlists',async(req)=>{const b=z.object({name:z.string().trim().min(1).max(60),published:z.boolean().default(true)}).parse(req.body);const list=id();db.prepare('INSERT INTO watchlists VALUES(?,?,?,?)').run(list,identity(req).id,b.name,+b.published);return {id:list};});
-app.get('/api/owner/products',async(req)=>db.prepare('SELECT p.*,(SELECT price FROM observations WHERE product_id=p.id ORDER BY observed DESC LIMIT 1) price FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.owner=? ORDER BY created DESC').all(identity(req).id));
-app.post('/api/owner/search',{config:{rateLimit:{max:5,timeWindow:60000}}},async(req)=>{const b=z.object({query:z.string().trim().min(2).max(240),local:z.boolean().default(false),source:z.string().max(30).optional(),condition:z.enum(['new','used','refurbished']).optional(),maxPrice:z.number().positive().optional()}).parse(req.body);const a=identity(req);if(b.local&&!a.zip)throw Object.assign(Error('Set your ZIP code in Settings first'),{statusCode:400});return discover(b.query,b.local?a.zip:undefined,a.radius,b);});
-app.post('/api/owner/products',async(req,res)=>{const b=z.object({url:z.url().max(2000),target:z.number().positive().max(1000000),listId:z.string(),condition:z.enum(['new','used','refurbished']).default('new')}).parse(req.body);const u=new URL(b.url);const source=sourceFor(u.href);if(u.protocol!=='https:'||!source)return res.code(400).send({error:'Use an HTTPS listing URL from a supported retailer'});const a=identity(req);if(source.local&&!a.zip)return res.code(400).send({error:'Configure your ZIP code before tracking local listings'});const list=db.prepare('SELECT id FROM watchlists WHERE id=? AND owner=?').get(b.listId,a.id);if(!list)return res.code(404).send({error:'Watchlist not found'});const total:any=db.prepare('SELECT count(*) n FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.owner=? AND active=1').get(a.id);if(total.n>=25)return res.code(409).send({error:'The current limit is 25 active products'});u.hash='';for(const key of [...u.searchParams.keys()])if(/^(utm_|ref|tag|fbclid)/.test(key))u.searchParams.delete(key);const product=id();db.prepare('INSERT INTO products(id,list_id,title,url,retailer,target,condition,created) VALUES(?,?,?,?,?,?,?,?)').run(product,b.listId,'Verifying listing…',u.href,source.id,Math.round(b.target*100),b.condition,now());enqueue(db,'check',product);return {id:product};});
-app.patch('/api/owner/products/:id',async(req:any,res)=>{const b=z.object({target:z.number().positive().max(1000000).optional(),active:z.boolean().optional()}).parse(req.body);const p:any=db.prepare('SELECT p.* FROM products p JOIN watchlists w ON w.id=p.list_id WHERE p.id=? AND w.owner=?').get(req.params.id,identity(req).id);if(!p)return res.code(404).send({error:'Product not found'});if(b.active&&!p.active){const n:any=db.prepare('SELECT count(*) n FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.owner=? AND active=1').get(identity(req).id);if(n.n>=25)return res.code(409).send({error:'Pause another product before reactivating this one'});}db.prepare('UPDATE products SET target=?,active=?,armed=CASE WHEN target<>? THEN 1 ELSE armed END WHERE id=?').run(b.target?Math.round(b.target*100):p.target,b.active===undefined?p.active:+b.active,b.target?Math.round(b.target*100):p.target,p.id);return {ok:true};});
-app.post('/api/owner/products/:id/:action',{config:{rateLimit:{max:10,timeWindow:60000}}},async(req:any,res)=>{if(!['research','refresh'].includes(req.params.action))return res.code(404).send({error:'Unknown action'});const p=db.prepare('SELECT p.id FROM products p JOIN watchlists w ON w.id=p.list_id WHERE p.id=? AND w.owner=?').get(req.params.id,identity(req).id);if(!p)return res.code(404).send({error:'Product not found'});enqueue(db,req.params.action==='research'?'research':'check',req.params.id);return {queued:true};});
-const secure=(req:any)=>{const x=String(req.headers.authorization||''),y='Bearer '+(process.env.METRICS_TOKEN||'');return !!process.env.METRICS_TOKEN&&x.length===y.length&&timingSafeEqual(Buffer.from(x),Buffer.from(y));};
-app.get('/internal/metrics',async(req,res)=>{if(!secure(req))return res.code(401).send();let out='pricedip_up 1\npricedip_telemetry_timestamp_seconds '+now()+'\n';for(const row of db.prepare('SELECT * FROM telemetry').all())if(/^[a-z_]+$/.test(String(row.key)))out+='pricedip_'+row.key+' '+row.value+'\n';const values:Record<string,number>={active_products:Number((db.prepare('SELECT count(*) n FROM products WHERE active=1').get() as any).n),stale_products:Number((db.prepare('SELECT count(*) n FROM products WHERE active=1 AND last_success IS NOT NULL AND last_success<?').get(now()-7200) as any).n),queue_pending:Number((db.prepare("SELECT count(*) n FROM jobs WHERE status IN ('pending','running')").get() as any).n),queue_oldest_age:Number((db.prepare("SELECT coalesce(?-min(created),0) n FROM jobs WHERE status IN ('pending','running')").get(now()) as any).n),email_pending:Number((db.prepare("SELECT count(*) n FROM outbox WHERE status='pending'").get() as any).n),memory_bytes:process.memoryUsage().rss};for(const[k,v]of Object.entries(values))out+='pricedip_'+k+' '+v+'\n';return res.type('text/plain').send(out);});
-app.get('/internal/readyz',async(req,res)=>{if(!secure(req))return res.code(401).send();const heartbeat:any=db.prepare("SELECT value FROM telemetry WHERE key='worker_heartbeat'").get();return {database:!!db.prepare('SELECT 1').get(),worker:!!heartbeat&&now()-heartbeat.value<180,release};});
-if(fs.existsSync('dist')){await app.register(statics,{root:path.resolve('dist'),wildcard:false});app.setNotFoundHandler((req,res)=>req.url.startsWith('/api/')?res.code(404).send({error:'Not found'}):res.sendFile('index.html'));}
-await app.listen({host:'127.0.0.1',port:Number(process.env.PORT||4350)});console.log('PriceDip listening on loopback');process.on('SIGTERM',async()=>{await app.close();db.close();});
+import Fastify from "fastify";
+import cookie from "@fastify/cookie";
+import statics from "@fastify/static";
+import rateLimit from "@fastify/rate-limit";
+import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { jwtVerify } from "jose";
+import path from "node:path";
+import fs from "node:fs";
+import { z } from "zod";
+import { openDb, bootstrap, now, id, enqueue, count } from "./db.js";
+import { sourceFor, sources } from "./policy.js";
+import { discover } from "./search.js";
+import { sampleProducts } from "./sample.js";
+const origin = process.env.APP_ORIGIN || "https://pricedip.ramideltoro.com",
+  ownerEmail = "rami.deltoro@gmail.com";
+const db = openDb();
+const owner = bootstrap(db, ownerEmail);
+const app = Fastify({
+  logger: false,
+  bodyLimit: 32768,
+  trustProxy: "127.0.0.1",
+});
+await app.register(cookie);
+await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
+let release: any = { app: "development", wiki: null };
+try {
+  release = JSON.parse(fs.readFileSync("release.json", "utf8"));
+} catch {}
+const sessionName = "__Host-pricedip-session";
+const hash = (s: string) => createHash("sha256").update(s).digest("hex");
+const identity = (req: any): any => {
+  const token = req.cookies[sessionName];
+  if (!token) return null;
+  return db
+    .prepare(
+      "SELECT a.* FROM sessions s JOIN accounts a ON a.id=s.owner WHERE s.token=? AND s.expires>? AND a.email=?",
+    )
+    .get(hash(token), now(), ownerEmail);
+};
+app.addHook("onRequest", async (req, res) => {
+  res
+    .header("X-Content-Type-Options", "nosniff")
+    .header("Referrer-Policy", "no-referrer")
+    .header("X-Frame-Options", "DENY")
+    .header(
+      "Content-Security-Policy",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    );
+  if (req.url.startsWith("/api/owner/")) {
+    if (!identity(req))
+      return res.code(401).send({ error: "Owner Google sign-in required" });
+    res.header("Cache-Control", "private, no-store");
+    if (req.method !== "GET" && req.headers.origin !== origin)
+      return res.code(403).send({ error: "Invalid request origin" });
+  }
+  if (req.url.startsWith("/auth"))
+    res.header("Cache-Control", "private, no-store");
+});
+app.addHook("onResponse", async (req, res) => {
+  if (!req.url.startsWith("/internal/")) {
+    count(db, "http_requests_total");
+    count(db, "http_duration_seconds_total", res.elapsedTime / 1000);
+    if (res.statusCode >= 500) count(db, "http_errors_total");
+  }
+});
+app.setErrorHandler((error: any, req, res) => {
+  const validation = error instanceof z.ZodError;
+  res.code(validation ? 400 : error.statusCode || 500).send({
+    error: validation
+      ? "Please check the entered values."
+      : error.statusCode && error.statusCode < 500
+        ? error.message
+        : "Request could not be completed.",
+  });
+});
+app.get("/healthz", async () => ({
+  ok: true,
+  service: "pricedip",
+  release: release.app,
+}));
+app.get("/api/session", async (req, res) => {
+  res.header("Cache-Control", "private, no-store");
+  const a = identity(req);
+  return { authenticated: !!a, email: a?.email };
+});
+app.get("/auth/login", async (req, res) => {
+  if (!process.env.AUTH_BRIDGE_SECRET)
+    return res.code(503).send("Sign-in is not configured");
+  const state = randomBytes(32).toString("base64url");
+  db.prepare("INSERT INTO flows VALUES(?,?)").run(state, now() + 600);
+  res.setCookie("__Host-pricedip-flow", state, {
+    path: "/",
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 600,
+  });
+  return res.redirect(
+    "https://observe.ramideltoro.com/auth/pricedip?state=" + state,
+  );
+});
+app.get("/auth/callback", async (req, res) => {
+  try {
+    const q = z.object({ token: z.string().max(5000) }).parse(req.query);
+    const { payload } = await jwtVerify(
+      q.token,
+      new TextEncoder().encode(process.env.AUTH_BRIDGE_SECRET || ""),
+      {
+        algorithms: ["HS256"],
+        issuer: "https://observe.ramideltoro.com",
+        audience: "pricedip",
+        maxTokenAge: "60s",
+        requiredClaims: ["email", "state", "exp", "iat", "jti"],
+      },
+    );
+    const state = String(payload.state);
+    if (
+      payload.email !== ownerEmail ||
+      state !== req.cookies["__Host-pricedip-flow"]
+    )
+      throw Error("Invalid identity");
+    const consumed = db
+      .prepare("DELETE FROM flows WHERE state=? AND expires>?")
+      .run(state, now());
+    if (consumed.changes !== 1) throw Error("Expired flow");
+    const token = randomBytes(32).toString("base64url");
+    db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
+      hash(token),
+      owner.id,
+      now() + 43200,
+    );
+    res.setCookie(sessionName, token, {
+      path: "/",
+      secure: true,
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 43200,
+    });
+    res.clearCookie("__Host-pricedip-flow", { path: "/", secure: true });
+    return res.redirect("/");
+  } catch {
+    return res
+      .code(403)
+      .type("text/html")
+      .send(
+        '<h1>Sign-in could not be completed</h1><p>Only the approved owner can sign in.</p><a href="/auth/login">Try again</a>',
+      );
+  }
+});
+app.post("/api/owner/logout", async (req, res) => {
+  db.prepare("DELETE FROM sessions WHERE token=?").run(
+    hash(req.cookies[sessionName] || ""),
+  );
+  res.clearCookie(sessionName, { path: "/", secure: true });
+  return { ok: true };
+});
+app.get("/api/public/overview", async (req, res) => {
+  res.header("Cache-Control", "public,max-age=15");
+  const page = z
+    .object({
+      offset: z.coerce.number().int().min(0).default(0),
+      limit: z.coerce.number().int().min(1).max(100).default(100),
+    })
+    .parse(req.query);
+  const lists = db
+    .prepare("SELECT id,name FROM watchlists WHERE published=1")
+    .all();
+  const products = db
+    .prepare(
+      `SELECT p.id,p.list_id,p.title,p.url,p.retailer,p.target,p.condition,p.status,p.reason,p.last_checked,p.last_success,p.active,p.created,(SELECT price FROM observations WHERE product_id=p.id ORDER BY observed DESC LIMIT 1) price FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.published=1 ORDER BY p.created DESC LIMIT ? OFFSET ?`,
+    )
+    .all(page.limit, page.offset);
+  const events = db
+    .prepare(
+      "SELECT e.*,p.title FROM events e JOIN products p ON p.id=e.product_id JOIN watchlists w ON w.id=p.list_id WHERE w.published=1 ORDER BY e.created DESC LIMIT 30",
+    )
+    .all();
+  return {
+    lists,
+    products,
+    events,
+    samples: sampleProducts,
+    sources,
+    release,
+    pagination: page,
+  };
+});
+app.get("/api/public/products/:id", async (req: any, res) => {
+  res.header("Cache-Control", "private,no-store");
+  const p: any = db
+    .prepare(
+      "SELECT p.* FROM products p JOIN watchlists w ON w.id=p.list_id WHERE p.id=? AND (w.published=1 OR w.owner=?)",
+    )
+    .get(req.params.id, identity(req)?.id || "");
+  if (!p) return res.code(404).send({ error: "Product not found" });
+  const history = db
+    .prepare(
+      "SELECT observed,price,shipping,seller,availability FROM (SELECT observed,price,shipping,seller,availability,row_number() OVER(ORDER BY observed) rn,count(*) OVER() n FROM observations WHERE product_id=?) WHERE (rn-1)%max(1,cast((n+399)/400 AS INTEGER))=0 OR rn=n ORDER BY observed",
+    )
+    .all(p.id);
+  const research: any = db
+    .prepare("SELECT * FROM research WHERE product_id=?")
+    .get(p.id);
+  return {
+    history,
+    research: research
+      ? {
+          ...JSON.parse(research.brief),
+          sources: JSON.parse(research.sources),
+          created: research.created,
+        }
+      : null,
+  };
+});
+app.get("/api/owner/settings", async (req) => {
+  const a = identity(req);
+  return {
+    zip: a.zip || "",
+    radius: a.radius,
+    lists: db
+      .prepare("SELECT id,name,published FROM watchlists WHERE owner=?")
+      .all(a.id),
+  };
+});
+app.put("/api/owner/settings", async (req) => {
+  const b = z
+    .object({
+      zip: z.union([z.literal(""), z.string().regex(/^\d{5}$/)]),
+      radius: z.number().int().min(1).max(500),
+    })
+    .parse(req.body);
+  db.prepare("UPDATE accounts SET zip=?,radius=? WHERE id=?").run(
+    b.zip || null,
+    b.radius,
+    identity(req).id,
+  );
+  return { ok: true };
+});
+app.post("/api/owner/watchlists", async (req) => {
+  const b = z
+    .object({
+      name: z.string().trim().min(1).max(60),
+      published: z.boolean().default(true),
+    })
+    .parse(req.body);
+  const list = id();
+  db.prepare("INSERT INTO watchlists VALUES(?,?,?,?)").run(
+    list,
+    identity(req).id,
+    b.name,
+    +b.published,
+  );
+  return { id: list };
+});
+app.get("/api/owner/products", async (req) =>
+  db
+    .prepare(
+      "SELECT p.*,(SELECT price FROM observations WHERE product_id=p.id ORDER BY observed DESC LIMIT 1) price FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.owner=? ORDER BY created DESC",
+    )
+    .all(identity(req).id),
+);
+app.post(
+  "/api/owner/search",
+  { config: { rateLimit: { max: 5, timeWindow: 60000 } } },
+  async (req) => {
+    const b = z
+      .object({
+        query: z.string().trim().min(2).max(240),
+        local: z.boolean().default(false),
+        source: z.string().max(30).optional(),
+        condition: z.enum(["new", "used", "refurbished"]).optional(),
+        maxPrice: z.number().positive().optional(),
+        seller: z.string().trim().max(100).optional(),
+        delivery: z.enum(["pickup", "delivery"]).optional(),
+      })
+      .parse(req.body);
+    const a = identity(req);
+    if (b.local && !a.zip)
+      throw Object.assign(Error("Set your ZIP code in Settings first"), {
+        statusCode: 400,
+      });
+    return discover(b.query, b.local ? a.zip : undefined, a.radius, b);
+  },
+);
+app.post("/api/owner/products", async (req, res) => {
+  const b = z
+    .object({
+      url: z.url().max(2000),
+      target: z.number().positive().max(1000000),
+      listId: z.string(),
+      condition: z.enum(["new", "used", "refurbished"]).default("new"),
+    })
+    .parse(req.body);
+  const u = new URL(b.url);
+  const source = sourceFor(u.href);
+  if (
+    u.protocol !== "https:" ||
+    u.username ||
+    u.password ||
+    (u.port && u.port !== "443") ||
+    !source
+  )
+    return res
+      .code(400)
+      .send({ error: "Use an HTTPS listing URL from a supported retailer" });
+  const a = identity(req);
+  if (source.local && !a.zip)
+    return res.code(400).send({
+      error: "Configure your ZIP code before tracking local listings",
+    });
+  const list = db
+    .prepare("SELECT id FROM watchlists WHERE id=? AND owner=?")
+    .get(b.listId, a.id);
+  if (!list) return res.code(404).send({ error: "Watchlist not found" });
+  const total: any = db
+    .prepare(
+      "SELECT count(*) n FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.owner=? AND active=1",
+    )
+    .get(a.id);
+  if (total.n >= 25)
+    return res
+      .code(409)
+      .send({ error: "The current limit is 25 active products" });
+  u.hash = "";
+  for (const key of [...u.searchParams.keys()])
+    if (/^(utm_|ref|tag|fbclid)/.test(key)) u.searchParams.delete(key);
+  const product = id();
+  db.prepare(
+    "INSERT INTO products(id,list_id,title,url,retailer,target,condition,created) VALUES(?,?,?,?,?,?,?,?)",
+  ).run(
+    product,
+    b.listId,
+    "Verifying listing…",
+    u.href,
+    source.id,
+    Math.round(b.target * 100),
+    b.condition,
+    now(),
+  );
+  enqueue(db, "check", product);
+  return { id: product };
+});
+app.patch("/api/owner/products/:id", async (req: any, res) => {
+  const b = z
+    .object({
+      target: z.number().positive().max(1000000).optional(),
+      active: z.boolean().optional(),
+    })
+    .parse(req.body);
+  const p: any = db
+    .prepare(
+      "SELECT p.* FROM products p JOIN watchlists w ON w.id=p.list_id WHERE p.id=? AND w.owner=?",
+    )
+    .get(req.params.id, identity(req).id);
+  if (!p) return res.code(404).send({ error: "Product not found" });
+  if (b.active && !p.active) {
+    const n: any = db
+      .prepare(
+        "SELECT count(*) n FROM products p JOIN watchlists w ON w.id=p.list_id WHERE w.owner=? AND active=1",
+      )
+      .get(identity(req).id);
+    if (n.n >= 25)
+      return res
+        .code(409)
+        .send({ error: "Pause another product before reactivating this one" });
+  }
+  db.prepare(
+    "UPDATE products SET target=?,active=?,armed=CASE WHEN target<>? THEN 1 ELSE armed END WHERE id=?",
+  ).run(
+    b.target ? Math.round(b.target * 100) : p.target,
+    b.active === undefined ? p.active : +b.active,
+    b.target ? Math.round(b.target * 100) : p.target,
+    p.id,
+  );
+  return { ok: true };
+});
+app.post(
+  "/api/owner/products/:id/:action",
+  { config: { rateLimit: { max: 10, timeWindow: 60000 } } },
+  async (req: any, res) => {
+    if (!["research", "refresh"].includes(req.params.action))
+      return res.code(404).send({ error: "Unknown action" });
+    const p = db
+      .prepare(
+        "SELECT p.id FROM products p JOIN watchlists w ON w.id=p.list_id WHERE p.id=? AND w.owner=?",
+      )
+      .get(req.params.id, identity(req).id);
+    if (!p) return res.code(404).send({ error: "Product not found" });
+    enqueue(
+      db,
+      req.params.action === "research" ? "research" : "check",
+      req.params.id,
+    );
+    return { queued: true };
+  },
+);
+const secure = (req: any) => {
+  const x = String(req.headers.authorization || ""),
+    y = "Bearer " + (process.env.METRICS_TOKEN || "");
+  return (
+    !!process.env.METRICS_TOKEN &&
+    x.length === y.length &&
+    timingSafeEqual(Buffer.from(x), Buffer.from(y))
+  );
+};
+app.get("/internal/metrics", async (req, res) => {
+  if (!secure(req)) return res.code(401).send();
+  let out =
+    "pricedip_up 1\npricedip_telemetry_timestamp_seconds " + now() + "\n";
+  for (const row of db.prepare("SELECT * FROM telemetry").all())
+    if (/^[a-z_]+$/.test(String(row.key)))
+      out += "pricedip_" + row.key + " " + row.value + "\n";
+  const values: Record<string, number> = {
+    active_products: Number(
+      (
+        db
+          .prepare("SELECT count(*) n FROM products WHERE active=1")
+          .get() as any
+      ).n,
+    ),
+    stale_products: Number(
+      (
+        db
+          .prepare(
+            "SELECT count(*) n FROM products WHERE active=1 AND coalesce(last_success,created)<?",
+          )
+          .get(now() - 7200) as any
+      ).n,
+    ),
+    queue_pending: Number(
+      (
+        db
+          .prepare(
+            "SELECT count(*) n FROM jobs WHERE status IN ('pending','running')",
+          )
+          .get() as any
+      ).n,
+    ),
+    queue_oldest_age: Number(
+      (
+        db
+          .prepare(
+            "SELECT coalesce(?-min(created),0) n FROM jobs WHERE status IN ('pending','running')",
+          )
+          .get(now()) as any
+      ).n,
+    ),
+    email_pending: Number(
+      (
+        db
+          .prepare("SELECT count(*) n FROM outbox WHERE status='pending'")
+          .get() as any
+      ).n,
+    ),
+    memory_bytes: process.memoryUsage().rss,
+  };
+  for (const [k, v] of Object.entries(values))
+    out += "pricedip_" + k + " " + v + "\n";
+  return res.type("text/plain").send(out);
+});
+app.get("/internal/readyz", async (req, res) => {
+  if (!secure(req)) return res.code(401).send();
+  const heartbeat: any = db
+    .prepare("SELECT value FROM telemetry WHERE key='worker_heartbeat'")
+    .get();
+  return {
+    database: !!db.prepare("SELECT 1").get(),
+    worker: !!heartbeat && now() - heartbeat.value < 180,
+    release,
+  };
+});
+if (fs.existsSync("dist")) {
+  await app.register(statics, {
+    root: path.resolve("dist"),
+    wildcard: false,
+    setHeaders(res, file) {
+      res.header(
+        "Cache-Control",
+        file.includes("/assets/")
+          ? "public,max-age=31536000,immutable"
+          : "no-cache",
+      );
+    },
+  });
+  app.setNotFoundHandler((req, res) =>
+    req.url.startsWith("/api/")
+      ? res.code(404).send({ error: "Not found" })
+      : res.sendFile("index.html"),
+  );
+}
+await app.listen({ host: "127.0.0.1", port: Number(process.env.PORT || 4350) });
+console.log("PriceDip listening on loopback");
+process.on("SIGTERM", async () => {
+  await app.close();
+  db.close();
+});

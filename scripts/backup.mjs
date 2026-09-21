@@ -1,2 +1,34 @@
-import {DatabaseSync} from 'node:sqlite';import fs from 'node:fs';import path from 'node:path';
-const dbPath=process.env.DB_PATH||'/var/lib/pricedip/pricedip.sqlite';if(!fs.existsSync(dbPath))process.exit(0);const dir=path.join(path.dirname(dbPath),'backups');fs.mkdirSync(dir,{recursive:true,mode:0o700});const file=path.join(dir,new Date().toISOString().replace(/[:.]/g,'-')+'.sqlite');const db=new DatabaseSync(dbPath);db.exec("VACUUM INTO '"+file.replace(/'/g,"''")+"'");const restored=file+'.restore-test';fs.copyFileSync(file,restored);const verify=new DatabaseSync(restored);if(verify.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw Error('Backup integrity failed');for(const table of ['accounts','products','observations','events','jobs'])verify.prepare('SELECT count(*) FROM '+table).get();verify.close();fs.unlinkSync(restored);for(const key of ['backup_timestamp','restore_timestamp'])db.prepare('INSERT INTO telemetry VALUES(?,unixepoch()) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key);db.close();for(const old of fs.readdirSync(dir).filter(f=>f.endsWith('.sqlite')).sort().slice(0,-14))fs.unlinkSync(path.join(dir,old));console.log('Backup and isolated restore verification passed');
+import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
+import path from "node:path";
+const dbPath = process.env.DB_PATH || "/var/lib/pricedip/pricedip.sqlite";
+if (!fs.existsSync(dbPath)) process.exit(0);
+const dir = path.join(path.dirname(dbPath), "backups");
+fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+const file = path.join(
+  dir,
+  new Date().toISOString().replace(/[:.]/g, "-") + ".sqlite",
+);
+const db = new DatabaseSync(dbPath);
+db.exec("VACUUM INTO '" + file.replace(/'/g, "''") + "'");
+const restored = file + ".restore-test";
+fs.copyFileSync(file, restored);
+const verify = new DatabaseSync(restored);
+if (verify.prepare("PRAGMA integrity_check").get().integrity_check !== "ok")
+  throw Error("Backup integrity failed");
+for (const table of ["accounts", "products", "observations", "events", "jobs"])
+  verify.prepare("SELECT count(*) FROM " + table).get();
+verify.close();
+fs.unlinkSync(restored);
+for (const key of ["backup_timestamp", "restore_timestamp"])
+  db.prepare(
+    "INSERT INTO telemetry VALUES(?,unixepoch()) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+  ).run(key);
+db.close();
+for (const old of fs
+  .readdirSync(dir)
+  .filter((f) => f.endsWith(".sqlite"))
+  .sort()
+  .slice(0, -14))
+  fs.unlinkSync(path.join(dir, old));
+console.log("Backup and isolated restore verification passed");

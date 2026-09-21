@@ -1,8 +1,16 @@
-import {DatabaseSync} from 'node:sqlite';import fs from 'node:fs';import path from 'node:path';import {randomUUID} from 'node:crypto';
-export const now=()=>Math.floor(Date.now()/1000);export const id=()=>randomUUID();
-export function openDb(filename=process.env.DB_PATH||'data/pricedip.sqlite'){
- if(filename!==':memory:')fs.mkdirSync(path.dirname(filename),{recursive:true});
- const db=new DatabaseSync(filename);db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+export const now = () => Math.floor(Date.now() / 1000);
+export const id = () => randomUUID();
+export function openDb(
+  filename = process.env.DB_PATH || "data/pricedip.sqlite",
+) {
+  if (filename !== ":memory:")
+    fs.mkdirSync(path.dirname(filename), { recursive: true });
+  const db = new DatabaseSync(filename);
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
  CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY,applied INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,zip TEXT,radius INTEGER NOT NULL DEFAULT 25);
  CREATE TABLE IF NOT EXISTS watchlists(id TEXT PRIMARY KEY,owner TEXT NOT NULL REFERENCES accounts(id),name TEXT NOT NULL,published INTEGER NOT NULL DEFAULT 1);
@@ -19,11 +27,78 @@ export function openDb(filename=process.env.DB_PATH||'data/pricedip.sqlite'){
  CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,owner TEXT NOT NULL REFERENCES accounts(id),expires INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS telemetry(key TEXT PRIMARY KEY,value REAL NOT NULL);
  INSERT OR IGNORE INTO migrations VALUES(1,unixepoch());`);
- return db;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!db.prepare("SELECT 1 FROM migrations WHERE version=2").get()) {
+      db.exec(`
+      ALTER TABLE products ADD COLUMN identity TEXT;
+      ALTER TABLE outbox ADD COLUMN sent_at INTEGER;
+      CREATE INDEX IF NOT EXISTS outbox_due ON outbox(status,next_attempt);
+      CREATE TABLE IF NOT EXISTS deployments(id TEXT PRIMARY KEY,kind TEXT NOT NULL,app TEXT NOT NULL,wiki TEXT,created INTEGER NOT NULL);
+      INSERT INTO migrations VALUES(2,unixepoch());`);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    db.close();
+    throw error;
+  }
+  return db;
 }
-export type Db=ReturnType<typeof openDb>;
-export function metric(db:Db,key:string,value:number){db.prepare('INSERT INTO telemetry VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,value);}
-export function count(db:Db,key:string,by=1){db.prepare('INSERT INTO telemetry VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=value+excluded.value').run(key,by);}
-export function enqueue(db:Db,kind:string,product:string){db.prepare('INSERT OR IGNORE INTO jobs(id,kind,product_id,available,created) VALUES(?,?,?,?,?)').run(id(),kind,product,now(),now());}
-export function claim(db:Db,kind?:string):any{db.exec('BEGIN IMMEDIATE');try{db.prepare("UPDATE jobs SET status='pending',lease_until=NULL WHERE status='running' AND lease_until<?").run(now());const job=db.prepare("SELECT * FROM jobs WHERE status='pending' AND available<=? "+(kind?'AND kind=? ':'')+'ORDER BY created LIMIT 1').get(...(kind?[now(),kind]:[now()]));if(job)db.prepare("UPDATE jobs SET status='running',attempts=attempts+1,lease_until=? WHERE id=?").run(now()+300,job.id);db.exec('COMMIT');return job;}catch(e){db.exec('ROLLBACK');throw e;}}
-export function bootstrap(db:Db,email:string){let a:any=db.prepare('SELECT * FROM accounts WHERE email=?').get(email);if(!a){const account=id();db.prepare('INSERT INTO accounts(id,email) VALUES(?,?)').run(account,email);db.prepare('INSERT INTO watchlists VALUES(?,?,?,1)').run(id(),account,'My watchlist');a=db.prepare('SELECT * FROM accounts WHERE id=?').get(account);}return a;}
+export type Db = ReturnType<typeof openDb>;
+export function metric(db: Db, key: string, value: number) {
+  db.prepare(
+    "INSERT INTO telemetry VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+  ).run(key, value);
+}
+export function count(db: Db, key: string, by = 1) {
+  db.prepare(
+    "INSERT INTO telemetry VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=value+excluded.value",
+  ).run(key, by);
+}
+export function enqueue(db: Db, kind: string, product: string) {
+  db.prepare(
+    "INSERT OR IGNORE INTO jobs(id,kind,product_id,available,created) VALUES(?,?,?,?,?)",
+  ).run(id(), kind, product, now(), now());
+}
+export function claim(db: Db, kind?: string): any {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(
+      "UPDATE jobs SET status='pending',lease_until=NULL WHERE status='running' AND lease_until<?",
+    ).run(now());
+    const job = db
+      .prepare(
+        "SELECT * FROM jobs WHERE status='pending' AND available<=? " +
+          (kind ? "AND kind=? " : "") +
+          "ORDER BY CASE WHEN kind='check' THEN 0 ELSE 1 END,created LIMIT 1",
+      )
+      .get(...(kind ? [now(), kind] : [now()]));
+    if (job)
+      db.prepare(
+        "UPDATE jobs SET status='running',attempts=attempts+1,lease_until=? WHERE id=?",
+      ).run(now() + 300, job.id);
+    db.exec("COMMIT");
+    return job;
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+export function bootstrap(db: Db, email: string) {
+  let a: any = db.prepare("SELECT * FROM accounts WHERE email=?").get(email);
+  if (!a) {
+    const account = id();
+    db.prepare("INSERT INTO accounts(id,email) VALUES(?,?)").run(
+      account,
+      email,
+    );
+    db.prepare("INSERT INTO watchlists VALUES(?,?,?,1)").run(
+      id(),
+      account,
+      "My watchlist",
+    );
+    a = db.prepare("SELECT * FROM accounts WHERE id=?").get(account);
+  }
+  return a;
+}

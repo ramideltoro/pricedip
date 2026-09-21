@@ -1,5 +1,81 @@
-export interface Seller {name:string;direct?:boolean;verifiedBusiness?:boolean;rating?:number;reviews?:number;positive?:number;feedback?:number;evidenceUrl:string;verifiedAt:number}
-export function sellerEligibility(source:string,s:Seller){if(!s.name||!s.evidenceUrl||!s.verifiedAt)return {eligible:false,reason:'Seller evidence unavailable'};if(s.direct||s.verifiedBusiness)return {eligible:true,reason:'Verified direct retailer or manufacturer'};if(source==='ebay')return {eligible:(s.positive??0)>=99&&(s.feedback??0)>=100,reason:'eBay requires 99% positive feedback and score 100+'};return {eligible:(s.rating??0)>=4.5&&(s.reviews??0)>=20,reason:'Marketplace requires 4.5/5 and 20 attributable reviews'};}
-export const sources=[{id:'amazon',name:'Amazon',host:'amazon.com'},{id:'walmart',name:'Walmart',host:'walmart.com'},{id:'bestbuy',name:'Best Buy',host:'bestbuy.com'},{id:'target',name:'Target',host:'target.com'},{id:'ebay',name:'eBay',host:'ebay.com'},{id:'craigslist',name:'Craigslist',host:'craigslist.org',local:true},{id:'facebook',name:'Facebook Marketplace',host:'facebook.com',local:true},{id:'offerup',name:'OfferUp',host:'offerup.com',local:true}];
-export function sourceFor(url:string){const u=new URL(url);return sources.find(s=>u.hostname===s.host||u.hostname.endsWith('.'+s.host));}
-export function qualifies(price:number,target:number,stock:string,currency:string,conditional=false,auction=false){return Number.isSafeInteger(price)&&price>0&&price<target&&stock==='in_stock'&&currency==='USD'&&!conditional&&!auction;}
+export interface Seller {
+  name: string;
+  direct?: boolean;
+  verifiedBusiness?: boolean;
+  rating?: number;
+  reviews?: number;
+  positive?: number;
+  feedback?: number;
+  evidenceUrl: string;
+  verifiedAt: number;
+}
+export function sellerEligibility(source: string, s: Seller) {
+  if (!s.name || !s.evidenceUrl || !s.verifiedAt)
+    return { eligible: false, reason: "Seller evidence unavailable" };
+  if (s.direct || s.verifiedBusiness)
+    return {
+      eligible: true,
+      reason: "Verified direct retailer or manufacturer",
+    };
+  if (source === "ebay")
+    return {
+      eligible: (s.positive ?? 0) >= 99 && (s.feedback ?? 0) >= 100,
+      reason: "eBay requires 99% positive feedback and score 100+",
+    };
+  return {
+    eligible: (s.rating ?? 0) >= 4.5 && (s.reviews ?? 0) >= 20,
+    reason: "Marketplace requires 4.5/5 and 20 attributable reviews",
+  };
+}
+export const sources = [
+  {
+    id: "sony",
+    name: "Sony Store",
+    host: "electronics.sony.com",
+    directStore: true,
+  },
+  { id: "apple", name: "Apple", host: "apple.com", directStore: true },
+  { id: "dyson", name: "Dyson", host: "dyson.com", directStore: true },
+  { id: "samsung", name: "Samsung", host: "samsung.com", directStore: true },
+  { id: "amazon", name: "Amazon", host: "amazon.com" },
+  { id: "walmart", name: "Walmart", host: "walmart.com" },
+  { id: "bestbuy", name: "Best Buy", host: "bestbuy.com" },
+  { id: "target", name: "Target", host: "target.com" },
+  { id: "ebay", name: "eBay", host: "ebay.com" },
+  { id: "craigslist", name: "Craigslist", host: "craigslist.org", local: true },
+  {
+    id: "facebook",
+    name: "Facebook Marketplace",
+    host: "facebook.com",
+    local: true,
+  },
+  { id: "offerup", name: "OfferUp", host: "offerup.com", local: true },
+];
+export function sourceFor(url: string) {
+  const u = new URL(url);
+  return sources.find(
+    (s) =>
+      u.hostname === s.host ||
+      (s.directStore
+        ? u.hostname === "www." + s.host
+        : u.hostname.endsWith("." + s.host)),
+  );
+}
+export function qualifies(
+  price: number,
+  target: number,
+  stock: string,
+  currency: string,
+  conditional = false,
+  auction = false,
+) {
+  return (
+    Number.isSafeInteger(price) &&
+    price > 0 &&
+    price < target &&
+    stock === "in_stock" &&
+    currency === "USD" &&
+    !conditional &&
+    !auction
+  );
+}
