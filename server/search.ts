@@ -1,7 +1,7 @@
 import { safeFetch } from "./fetcher.js";
 import * as cheerio from "cheerio";
 import { z } from "zod";
-import { sources, sourceFor } from "./policy.js";
+import { sources, sourceFor, requiresLocation } from "./policy.js";
 import { extract, type Offer } from "./adapters.js";
 export async function discover(
   query: string,
@@ -83,7 +83,7 @@ export async function discover(
               .includes(filters.seller.toLowerCase())) &&
           (!filters.delivery || o.delivery === filters.delivery) &&
           (!filters.maxPrice || o.price <= filters.maxPrice * 100) &&
-          (!sourceFor(o.url)?.local ||
+          (!requiresLocation(o.url, o.delivery) ||
             (zip && (await withinRadius(zip, o, radius))))
         )
           offers.push(o);
