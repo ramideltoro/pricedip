@@ -463,11 +463,13 @@ app.get("/internal/readyz", async (req, res) => {
   const heartbeat: any = db
     .prepare("SELECT value FROM telemetry WHERE key='worker_heartbeat'")
     .get();
-  return {
-    database: !!db.prepare("SELECT 1").get(),
-    worker: !!heartbeat && now() - heartbeat.value < 180,
+  const database = !!db.prepare("SELECT 1").get();
+  const worker = !!heartbeat && now() - heartbeat.value < 180;
+  return res.code(database && worker ? 200 : 503).send({
+    database,
+    worker,
     release,
-  };
+  });
 });
 if (fs.existsSync("dist")) {
   await app.register(statics, {

@@ -4,13 +4,45 @@ import { openDb, bootstrap, id, now, enqueue, claim } from "../server/db.js";
 import { sellerEligibility, qualifies } from "../server/policy.js";
 import { publicIP } from "../server/fetcher.js";
 import { recordOffer } from "../server/tracking.js";
-import { parseOffer } from "../server/adapters.js";
+import { parseOffer, ebayAuction, ebayCondition } from "../server/adapters.js";
 import type { Offer } from "../server/adapters.js";
 const seller = {
   name: "Example",
   evidenceUrl: "https://www.ebay.com/itm/12345678901",
   verifiedAt: now(),
 };
+test("mixed auction listings and unknown eBay conditions fail ordinary alert eligibility", () => {
+  assert.equal(ebayAuction(["FIXED_PRICE"]), false);
+  assert.equal(ebayAuction(["FIXED_PRICE", "AUCTION"]), true);
+  assert.equal(ebayAuction(undefined), true);
+  assert.equal(ebayCondition("Like New"), "unknown");
+  assert.equal(ebayCondition(undefined), "unknown");
+  assert.equal(ebayCondition("New"), "new");
+  assert.equal(ebayCondition("Used"), "used");
+});
+test("an expired price cannot remain available or trigger a target alert", () => {
+  const html =
+    '<script type="application/ld+json">' +
+    JSON.stringify({
+      "@type": "Product",
+      name: "Expired offer",
+      offers: {
+        "@type": "Offer",
+        price: 10,
+        priceCurrency: "USD",
+        priceValidUntil: "2020-01-01",
+        availability: "https://schema.org/InStock",
+        itemCondition: "https://schema.org/NewCondition",
+      },
+    }) +
+    "</script>";
+  const offer = parseOffer(
+    html,
+    "https://electronics.sony.com/audio/p/fixture",
+  );
+  assert.equal(offer.availability, "unavailable");
+  assert.equal(qualifies(offer.price, 2000, offer.availability, "USD"), false);
+});
 test("seller reputation fails closed at exact thresholds", () => {
   assert.equal(
     sellerEligibility("ebay", { ...seller, positive: 99, feedback: 100 })

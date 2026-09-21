@@ -24,6 +24,19 @@ export type Offer = {
   identity?: string;
   delivery?: "pickup" | "delivery" | "unknown";
 };
+export function ebayCondition(value: unknown) {
+  const condition = String(value || "");
+  return /^(new|brand new)$/i.test(condition)
+    ? "new"
+    : /refurb/i.test(condition)
+      ? "refurbished"
+      : /^(used|pre-owned|open box)/i.test(condition)
+        ? "used"
+        : "unknown";
+}
+export function ebayAuction(options?: string[]) {
+  return !options?.includes("FIXED_PRICE") || options.includes("AUCTION");
+}
 function flatten(x: any): any[] {
   if (Array.isArray(x)) return x.flatMap(flatten);
   if (x && typeof x === "object")
@@ -107,13 +120,16 @@ export function parseOffer(html: string, url: string): Offer {
       Number.isFinite(Number(o.shippingDetails.shippingRate.value))
         ? Math.round(Number(o.shippingDetails.shippingRate.value) * 100)
         : null,
-    availability: /InStock$/.test(o.availability || "")
-      ? "in_stock"
-      : /SoldOut|Discontinued/.test(o.availability || "")
-        ? "sold"
-        : /OutOfStock/.test(o.availability || "")
-          ? "unavailable"
-          : "unknown",
+    availability:
+      o.priceValidUntil && new Date(o.priceValidUntil).getTime() < Date.now()
+        ? "unavailable"
+        : /InStock$/.test(o.availability || "")
+          ? "in_stock"
+          : /SoldOut|Discontinued/.test(o.availability || "")
+            ? "sold"
+            : /OutOfStock/.test(o.availability || "")
+              ? "unavailable"
+              : "unknown",
     condition: /Used/.test(o.itemCondition || "")
       ? "used"
       : /Refurbished/.test(o.itemCondition || "")
@@ -155,6 +171,10 @@ export function parseOffer(html: string, url: string): Offer {
 }
 export async function extract(url: string, browser = false): Promise<Offer> {
   const s = sourceFor(url);
+  if (s?.id === "ebay" && new URL(url).searchParams.has("var"))
+    throw Error(
+      "This eBay variation URL requires explicit variation support; the default item will not be substituted",
+    );
   if (
     s?.id === "ebay" &&
     process.env.EBAY_CLIENT_ID &&
@@ -214,15 +234,11 @@ export async function extract(url: string, browser = false): Promise<Offer> {
         )
           ? "in_stock"
           : "unknown",
-        condition: /new/i.test(j.condition)
-          ? "new"
-          : /refurb/i.test(j.condition)
-            ? "refurbished"
-            : "used",
+        condition: ebayCondition(j.condition),
         seller,
         ...sellerEligibility("ebay", seller),
         conditional: false,
-        auction: !j.buyingOptions?.includes("FIXED_PRICE"),
+        auction: ebayAuction(j.buyingOptions),
         source: "ebay",
         url,
         delivery: j.shippingOptions?.length
